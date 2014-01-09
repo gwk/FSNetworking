@@ -247,7 +247,7 @@ totalBytesExpectedToWrite:(NSInteger)totalBytesExpectedToWrite {
         [self callOrDispatchParse];
     }
     else {
-        [self performComplete];
+        [self performCompleteWithError:nil];
     }
 }
 
@@ -257,7 +257,7 @@ totalBytesExpectedToWrite:(NSInteger)totalBytesExpectedToWrite {
     FSNVerbose(@"%p: didFail", self);
     self.finishOrFailInterval = [self intervalSinceStart];
     [self.responseStream close];
-    [self failWithError:error];
+    [self performCompleteWithError:error];
 }
 
 
@@ -459,37 +459,29 @@ NSAssert(!self.didStart, @"method cannot be called after start: %s", __FUNCTION_
         self.parseResult = self.parseBlock(self, &error);
         self.parseInterval = [self intervalSinceStart];
         
-        if (error) {
-            [self failWithError:error];
-        }
-        else {
-            [self performComplete];
-        }
+        [self performCompleteWithError:error];
     }
     
     [self.blocksLock unlock];
 }
 
 
-- (void)failWithError:(NSError *)error {
-    FSNLog(@"failWithError: %@\n  error: %@", self, error);
-    NSAssert(!self.error, @"error already set");
-    self.error = error;
-    
-    [self performComplete];
+- (void)performCompleteWithError:(NSError *)error {
+    [self performSelectorOnMainThread:@selector(completeWithError:) withObject:error waitUntilDone:NO]; // call retains self
 }
 
 
-- (void)performComplete {
-    FSNVerbose(@"%p: performComplete", self);
-    self.connection = nil;
-    [self performSelectorOnMainThread:@selector(complete) withObject:nil waitUntilDone:NO]; // call retains self
-}
-
-
-- (void)complete {
+- (void)completeWithError:(NSError *)error {
+    FSNVerbose(@"%p: completeWithError: %@", self, error);
     ASSERT_MAIN_THREAD;
-    
+    // this may get called twice due to didExpireInBackground.
+    if (self.didComplete) { // second call
+        FSNLogError(@"completeWithError: %@\n  previous error: %@", error, self.error);
+        return;
+    }
+    NSAssert(!self.error, @"error already set: %@", self.error); // error should not be set anywhere else.
+    self.error = error;
+    self.connection = nil;
     self.didComplete = YES;
     
     [self reportProgress];
@@ -540,7 +532,7 @@ NSAssert(!self.didStart, @"method cannot be called after start: %s", __FUNCTION_
     NSURLRequest *urlRequest = [self makeNSURLRequest];
     
     if (![NSURLConnection canHandleRequest:urlRequest]) {
-        [self failWithError:
+        [self performCompleteWithError:
          [NSError errorWithDomain:FSNConnectionErrorDomain
                              code:0
                          userInfo:[NSDictionary dictionaryWithObject:@"request cannot be handled"
@@ -555,8 +547,7 @@ NSAssert(!self.didStart, @"method cannot be called after start: %s", __FUNCTION_
                                               startImmediately:NO];
     
     if (!self.connection) {
-        
-        [self failWithError:
+        [self performCompleteWithError:
          [NSError errorWithDomain:FSNConnectionErrorDomain
                              code:0
                          userInfo:[NSDictionary dictionaryWithObject:@"could not establish connection"
@@ -607,11 +598,10 @@ NSAssert(!self.didStart, @"method cannot be called after start: %s", __FUNCTION_
     
     [self cancelConnection]; // releases delegate (self)
     
-    [self failWithError:
+    [self completeWithError:
      [NSError errorWithDomain:FSNConnectionErrorDomain
                          code:FSNConnectionErrorCodeExpiredInBackgroundTask
                      userInfo:[NSDictionary dictionaryWithObject:@"expired in background task" forKey:@"description"]]];
-    
 }
 
 #endif
