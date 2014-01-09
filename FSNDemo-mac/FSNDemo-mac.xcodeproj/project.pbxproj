@@ -59,6 +59,7 @@
 				EC1FD48415B44F8A00A26A2F /* Frameworks */,
 				EC1FD48215B44F8A00A26A2F /* Products */,
 			);
+			indentWidth = 4;
 			sourceTree = "<group>";
 		};
 		EC1FD48215B44F8A00A26A2F /* Products */ = {
